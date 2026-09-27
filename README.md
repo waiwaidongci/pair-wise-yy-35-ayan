@@ -30,9 +30,16 @@ python3 app.py --db ./data.db --port 8312
 - `GET /api/items/{id}`
 - `POST /api/items/{id}/records`
 - `POST /api/items/{id}/transition`，必须提交`expected_version`
+- `GET /api/items/{id}/exposures`
+- `POST /api/items/{id}/exposures`，按员工号登记剂量数值、通知方式和是否需要随访，同一员工仅一条记录
+- `POST /api/items/{id}/exposures/{employee_id}/notify`
+- `POST /api/items/{id}/exposures/{employee_id}/confirm`
+- `POST /api/items/{id}/exposures/{employee_id}/follow-up`，提交`appointment`（ISO 8601时间）
+- `POST /api/items/{id}/severity`，必须提交`expected_version`
+- `GET /api/exposures/summary`，返回待通知与待随访人数
 - `GET /api/audit`
 
-允许角色：dosimetrist, radiation_officer, health_physicist, viewer。剂量与调查水平之比决定升级程度，超过阈值必须进入调查；更正剂量不能覆盖已确认审计记录。
+允许角色：dosimetrist, radiation_officer, health_physicist, viewer。剂量与调查水平之比决定升级程度，超过阈值必须进入调查；更正剂量不能覆盖已确认审计记录。暴露人员台账中，需随访的人没有预约时间、或剂量达到调查水平的人尚未确认时，关闭事件返回冲突并列出未完成项；严重度调整后原通知与确认作废，须按新档重新通知和确认；登记、通知、确认、随访与调档全部进入审计链。演示页实时显示待通知与待随访人数。
 
 ## 测试
 

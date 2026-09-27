@@ -3,6 +3,7 @@ from .domain import ConflictError, ValidationError
 TITLE='职业辐射剂量与异常事件'; ENTITY='剂量事件'; ID_PREFIX='RD'
 SEVERITIES=['low', 'elevated', 'high', 'critical']; STATES=['recorded', 'reviewing', 'investigation', 'follow_up', 'closed']; TRANSITIONS={'recorded': ['reviewing'], 'reviewing': ['investigation'], 'investigation': ['follow_up'], 'follow_up': ['closed'], 'closed': []}; TRANSITION_ROLES={'reviewing': ['radiation_officer'], 'investigation': ['radiation_officer'], 'follow_up': ['health_physicist'], 'closed': ['health_physicist']}
 CREATE_ROLES=set(['dosimetrist']); RECORD_ROLES=set(['radiation_officer', 'health_physicist']); AUDIT_ROLES=set(['health_physicist', 'viewer']); VIEW_ROLES=set(['dosimetrist', 'radiation_officer', 'health_physicist', 'viewer'])
+EXPOSURE_REGISTER_ROLES=set(['dosimetrist', 'radiation_officer']); EXPOSURE_NOTIFY_ROLES=set(['radiation_officer', 'health_physicist']); EXPOSURE_CONFIRM_ROLES=set(['health_physicist']); EXPOSURE_FOLLOWUP_ROLES=set(['health_physicist']); SEVERITY_ADJUST_ROLES=set(['radiation_officer'])
 SEVERITY_WEIGHT={'low': 1.0, 'elevated': 3.0, 'high': 6.0, 'critical': 9.0}; DEADLINE_HOURS={'low': 72, 'elevated': 24, 'high': 8, 'critical': 4}; TERMINAL_STATES=set(['closed'])
 def priority_score(severity,quantity=0.0,threshold=1.0,open_records=0):
     if severity not in SEVERITY_WEIGHT: raise ValidationError("unknown severity")
@@ -19,4 +20,14 @@ def validate_transition(current,target):
     if current not in STATES or target not in STATES: raise ValidationError("未知状态")
     if not can_transition(current,target): raise ConflictError(f"不能从{current}转换到{target}")
 def completion_blockers(target,open_records): return ["仍有未关闭事项"] if target in TERMINAL_STATES and open_records>0 else []
+def exposure_blockers(target,exposures,threshold):
+    if target not in TERMINAL_STATES: return []
+    blockers=[]
+    for exposure in exposures:
+        employee=exposure["employee_id"]
+        if exposure["follow_up_required"] and not exposure["follow_up_appointment"]:
+            blockers.append(f"员工{employee}需要随访但未预约时间")
+        if threshold>0 and exposure["dose"]>=threshold and not exposure["confirmed"]:
+            blockers.append(f"员工{employee}剂量达到或超过调查水平但尚未确认")
+    return blockers
 def role_for_transition(target): return set(TRANSITION_ROLES.get(target,[]))

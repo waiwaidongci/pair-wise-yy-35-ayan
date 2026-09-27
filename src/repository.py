@@ -54,6 +54,23 @@ class Repository:
                     created_at TEXT NOT NULL,
                     UNIQUE(item_id, external_ref)
                 );
+                CREATE TABLE IF NOT EXISTS exposures (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    employee_id TEXT NOT NULL,
+                    dose REAL NOT NULL,
+                    notification_method TEXT NOT NULL,
+                    follow_up_required INTEGER NOT NULL DEFAULT 0,
+                    notified INTEGER NOT NULL DEFAULT 0,
+                    notified_at TEXT,
+                    confirmed INTEGER NOT NULL DEFAULT 0,
+                    confirmed_at TEXT,
+                    follow_up_appointment TEXT,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(item_id, employee_id)
+                );
                 CREATE TABLE IF NOT EXISTS audit_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     action TEXT NOT NULL,
@@ -156,6 +173,138 @@ class Repository:
                 (item_id,),
             ).fetchone()
         return int(row["n"])
+
+    @staticmethod
+    def _exposure(row: sqlite3.Row) -> Dict[str, Any]:
+        data = dict(row)
+        data["follow_up_required"] = bool(data["follow_up_required"])
+        data["notified"] = bool(data["notified"])
+        data["confirmed"] = bool(data["confirmed"])
+        return data
+
+    def add_exposure(self, item_id: int, employee_id: str, dose: float,
+                     notification_method: str, follow_up_required: bool,
+                     actor: str) -> Dict[str, Any]:
+        now = utc_now()
+        self.get_item(item_id)
+        try:
+            with self._lock, self.conn:
+                self.conn.execute(
+                    """INSERT INTO exposures(item_id, employee_id, dose, notification_method,
+                       follow_up_required, notified, confirmed, created_by, created_at, updated_at)
+                       VALUES(?,?,?,?,?,0,0,?,?,?)""",
+                    (item_id, employee_id, dose, notification_method,
+                     int(follow_up_required), actor, now, now),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ConflictError("该员工在此事件下已登记") from exc
+        return self.get_exposure(item_id, employee_id)
+
+    def get_exposure(self, item_id: int, employee_id: str) -> Dict[str, Any]:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM exposures WHERE item_id=? AND employee_id=?",
+                (item_id, employee_id),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("该员工未登记")
+        return self._exposure(row)
+
+    def list_exposures(self, item_id: int) -> List[Dict[str, Any]]:
+        self.get_item(item_id)
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM exposures WHERE item_id=? ORDER BY id", (item_id,)
+            ).fetchall()
+        return [self._exposure(row) for row in rows]
+
+    def mark_exposure_notified(self, item_id: int, employee_id: str) -> Dict[str, Any]:
+        now = utc_now()
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """UPDATE exposures SET notified=1, notified_at=?, updated_at=?
+                   WHERE item_id=? AND employee_id=?""",
+                (now, now, item_id, employee_id),
+            )
+            if cur.rowcount == 0:
+                raise NotFoundError("该员工未登记")
+        return self.get_exposure(item_id, employee_id)
+
+    def mark_exposure_confirmed(self, item_id: int, employee_id: str) -> Dict[str, Any]:
+        now = utc_now()
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """UPDATE exposures SET confirmed=1, confirmed_at=?, updated_at=?
+                   WHERE item_id=? AND employee_id=?""",
+                (now, now, item_id, employee_id),
+            )
+            if cur.rowcount == 0:
+                raise NotFoundError("该员工未登记")
+        return self.get_exposure(item_id, employee_id)
+
+    def set_follow_up_appointment(self, item_id: int, employee_id: str,
+                                  appointment: str) -> Dict[str, Any]:
+        now = utc_now()
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """UPDATE exposures SET follow_up_appointment=?, updated_at=?
+                   WHERE item_id=? AND employee_id=?""",
+                (appointment, now, item_id, employee_id),
+            )
+            if cur.rowcount == 0:
+                raise NotFoundError("该员工未登记")
+        return self.get_exposure(item_id, employee_id)
+
+    def reset_exposure_notifications(self, item_id: int) -> Dict[str, int]:
+        now = utc_now()
+        with self._lock, self.conn:
+            row = self.conn.execute(
+                "SELECT COUNT(*) AS n FROM exposures WHERE item_id=? AND notified=1",
+                (item_id,),
+            ).fetchone()
+            notifications_reset = int(row["n"])
+            row = self.conn.execute(
+                "SELECT COUNT(*) AS n FROM exposures WHERE item_id=? AND confirmed=1",
+                (item_id,),
+            ).fetchone()
+            confirmations_voided = int(row["n"])
+            self.conn.execute(
+                """UPDATE exposures SET notified=0, notified_at=NULL, confirmed=0,
+                   confirmed_at=NULL, updated_at=? WHERE item_id=?""",
+                (now, item_id),
+            )
+        return {"notifications_reset": notifications_reset,
+                "confirmations_voided": confirmations_voided}
+
+    def update_item_severity(self, item_id: int, severity: str,
+                             expected_version: int) -> Dict[str, Any]:
+        now = utc_now()
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """UPDATE items SET severity=?, version=version+1, updated_at=?
+                   WHERE id=? AND version=?""",
+                (severity, now, item_id, expected_version),
+            )
+            if cur.rowcount == 0:
+                exists = self.conn.execute("SELECT 1 FROM items WHERE id=?", (item_id,)).fetchone()
+                if exists is None:
+                    raise NotFoundError("项目不存在")
+                raise ConflictError("版本冲突，请刷新后重试")
+        return self.get_item(item_id)
+
+    def exposure_summary(self) -> Dict[str, int]:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT
+                     COALESCE(SUM(CASE WHEN notified=0 THEN 1 ELSE 0 END),0)
+                         AS pending_notifications,
+                     COALESCE(SUM(CASE WHEN follow_up_required=1 AND
+                         (follow_up_appointment IS NULL OR follow_up_appointment='')
+                         THEN 1 ELSE 0 END),0) AS pending_followups
+                   FROM exposures"""
+            ).fetchone()
+        return {"pending_notifications": int(row["pending_notifications"]),
+                "pending_followups": int(row["pending_followups"])}
 
     def append_audit(self, action: str, entity_type: str, entity_id: int,
                      actor: str, detail: dict) -> Dict[str, Any]:

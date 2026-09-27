@@ -4,7 +4,7 @@ import json
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .domain import (ConflictError, DomainError, NotFoundError, PermissionDenied,
                      ValidationError)
@@ -71,7 +71,11 @@ def make_handler(service: Service, static_dir: str):
                 status = 400
             else:
                 status = 500
-            self._json(status, {"error": exc.__class__.__name__, "message": str(exc)})
+            payload = {"error": exc.__class__.__name__, "message": str(exc)}
+            blockers = getattr(exc, "blockers", None)
+            if blockers:
+                payload["blockers"] = blockers
+            self._json(status, payload)
 
         def do_GET(self) -> None:
             try:
@@ -84,6 +88,15 @@ def make_handler(service: Service, static_dir: str):
                     actor, role = self._identity()
                     del actor
                     self._json(200, {"items": service.list_items(role)})
+                elif path == "/api/exposures/summary":
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, service.exposure_summary(role))
+                elif path.startswith("/api/items/") and path.endswith("/exposures"):
+                    item_id = int(path.split("/")[3])
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"exposures": service.list_exposures(item_id, role)})
                 elif path.startswith("/api/items/") and path.endswith("/records"):
                     item_id = int(path.split("/")[3])
                     actor, role = self._identity()
@@ -110,6 +123,28 @@ def make_handler(service: Service, static_dir: str):
                 body = self._body()
                 if path == "/api/items":
                     self._json(201, service.create_item(body, actor, role))
+                elif path.startswith("/api/items/") and "/exposures/" in path:
+                    parts = path.split("/")
+                    item_id = int(parts[3])
+                    employee_id = unquote(parts[5])
+                    action = parts[6] if len(parts) > 6 else ""
+                    if action == "notify":
+                        self._json(200, service.notify_exposure(
+                            item_id, employee_id, actor, role))
+                    elif action == "confirm":
+                        self._json(200, service.confirm_exposure(
+                            item_id, employee_id, actor, role))
+                    elif action == "follow-up":
+                        self._json(200, service.schedule_follow_up(
+                            item_id, employee_id, body, actor, role))
+                    else:
+                        self._json(404, {"error": "not_found"})
+                elif path.startswith("/api/items/") and path.endswith("/exposures"):
+                    item_id = int(path.split("/")[3])
+                    self._json(201, service.register_exposure(item_id, body, actor, role))
+                elif path.startswith("/api/items/") and path.endswith("/severity"):
+                    item_id = int(path.split("/")[3])
+                    self._json(200, service.adjust_severity(item_id, body, actor, role))
                 elif path.startswith("/api/items/") and path.endswith("/records"):
                     item_id = int(path.split("/")[3])
                     self._json(201, service.add_record(item_id, body, actor, role))
