@@ -1,1 +1,31 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>职业辐射剂量与异常事件</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#17212b}pre{background:#f4f7f9;padding:1rem;overflow:auto}button{padding:.55rem 1rem}</style></head><body><h1>职业辐射剂量与异常事件</h1><p>合并监测读数，比较历史剂量并管理超限调查、医学随访与报告期限</p><p>剂量与调查水平之比决定升级程度，超过阈值必须进入调查；更正剂量不能覆盖已确认审计记录。</p><button onclick="loadItems()">刷新列表</button><pre id="out">使用X-Actor和X-Role请求头调用接口。</pre><script>async function loadItems(){const r=await fetch('/api/items',{headers:{'X-Actor':'demo','X-Role':'viewer'}});document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2)}</script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>职业辐射剂量与异常事件</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;color:#17212b}pre{background:#f4f7f9;padding:1rem;overflow:auto}button{padding:.55rem 1rem}table{border-collapse:collapse;width:100%;margin:1rem 0}th,td{border:1px solid #d5dde3;padding:.45rem .6rem;text-align:left;font-size:.9rem}th{background:#eef3f6}.badge{display:inline-block;min-width:1.6rem;text-align:center;border-radius:10px;padding:.1rem .55rem;color:#fff}.n{background:#c0392b}.z{background:#7f8c8d}</style></head><body><h1>职业辐射剂量与异常事件</h1><p>合并监测读数，比较历史剂量并管理超限调查、医学随访与报告期限</p><p>剂量与调查水平之比决定升级程度，超过阈值必须进入调查；更正剂量不能覆盖已确认审计记录。严重度调整后原通知确认作废，须按新档重新通知。</p><button onclick="loadAll()">刷新汇总</button>
+<h2>暴露人员待办（未关闭事件）</h2>
+<div id="summary"></div>
+<h2>事件列表</h2>
+<pre id="out">使用X-Actor和X-Role请求头调用接口。</pre>
+<script>
+const H={'X-Actor':'demo','X-Role':'viewer'};
+function badge(n){return '<span class="badge '+(n>0?'n':'z')+'">'+n+'</span>';}
+function esc(s){return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+async function loadAll(){
+  const [s,i]=await Promise.all([
+    fetch('/api/exposure_summary',{headers:H}).then(r=>r.json()),
+    fetch('/api/items',{headers:H}).then(r=>r.json())
+  ]);
+  const rows=(s.events||[]).filter(e=>e.exposure_count>0);
+  let html='<table><tr><th>事件</th><th>状态</th><th>暴露人数</th><th>待通知</th><th>待随访预约</th><th>关闭阻塞项</th></tr>';
+  if(!rows.length){html+='<tr><td colspan="6">暂无暴露人员登记</td></tr>';}
+  for(const e of rows){
+    html+='<tr><td>'+e.item_id+' '+esc(e.title)+'</td><td>'+esc(e.status)+'</td><td>'+e.exposure_count
+      +'</td><td>'+badge(e.pending_notification)
+      +(e.pending_notification_employees?' <small>'+esc(e.pending_notification_employees)+'</small>':'')
+      +'</td><td>'+badge(e.pending_follow_up)
+      +(e.pending_follow_up_employees?' <small>'+esc(e.pending_follow_up_employees)+'</small>':'')
+      +'</td><td>'+badge(e.blocking_count)+'</td></tr>';
+  }
+  html+='</table>';
+  document.getElementById('summary').innerHTML=html;
+  document.getElementById('out').textContent=JSON.stringify(i,null,2);
+}
+loadAll();
+</script></body></html>

@@ -1,11 +1,13 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 class ErrorKind:
     VALIDATION="validation"; NOT_FOUND="not_found"; FORBIDDEN="forbidden"; CONFLICT="conflict"
 class DomainError(Exception):
     kind=ErrorKind.VALIDATION
-    def __init__(self,message): super().__init__(message); self.message=message
+    def __init__(self,message,details:Optional[List[str]]=None):
+        super().__init__(message); self.message=message; self.details=details or []
 class ValidationError(DomainError): kind=ErrorKind.VALIDATION
 class NotFoundError(DomainError): kind=ErrorKind.NOT_FOUND
 class PermissionDenied(DomainError): kind=ErrorKind.FORBIDDEN
@@ -17,6 +19,9 @@ class Item:
 @dataclass(frozen=True)
 class Record:
     id:int; item_id:int; kind:str; detail:str; status:str; external_ref:Optional[str]; created_by:str; created_at:str
+@dataclass(frozen=True)
+class Exposure:
+    id:int; item_id:int; employee_no:str; dose:float; notify_method:str; follow_up_required:int; appointment_at:Optional[str]; notified_severity:Optional[str]; notified_at:Optional[str]; confirmed_at:Optional[str]; created_by:str; created_at:str; updated_at:str
 @dataclass(frozen=True)
 class AuditEntry:
     id:int; action:str; entity_type:str; entity_id:int; actor:str; detail:Dict[str,Any]; previous_hash:str; entry_hash:str; created_at:str
@@ -34,5 +39,14 @@ def require_number(value,field,minimum=0.0):
     except (TypeError,ValueError): raise ValidationError(f"{field}必须是数字")
     if number<minimum: raise ValidationError(f"{field}不能小于{minimum}")
     return number
+def require_bool(value,field):
+    if not isinstance(value,bool): raise ValidationError(f"{field}必须是布尔值")
+    return value
+def require_iso_datetime(value,field):
+    if not isinstance(value,str) or not value.strip(): raise ValidationError(f"{field}必须是ISO时间")
+    text=value.strip()
+    try: datetime.fromisoformat(text.replace("Z","+00:00"))
+    except ValueError: raise ValidationError(f"{field}不是有效的ISO时间")
+    return text
 def ensure_role(role,allowed):
     if role not in allowed: raise PermissionDenied("当前角色无权执行该操作")

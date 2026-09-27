@@ -31,8 +31,23 @@ python3 app.py --db ./data.db --port 8312
 - `POST /api/items/{id}/records`
 - `POST /api/items/{id}/transition`，必须提交`expected_version`
 - `GET /api/audit`
+- `GET /api/exposure_summary`：各未关闭事件的暴露人数、待通知、待随访预约与关闭阻塞项计数
+- `GET /api/items/{id}/exposures`：暴露人员台账
+- `POST /api/items/{id}/exposures`：按员工号登记剂量、通知方式（sms/email/phone/onsite/letter）、是否随访（同一事件同一员工仅一条，重复返回409）
+- `PATCH风格 POST /api/items/{id}/exposures/{eid}`：更正剂量/通知方式/随访标记/预约
+- `POST /api/items/{id}/exposures/{eid}/notify`：按当前严重度档通知本人
+- `POST /api/items/{id}/exposures/{eid}/confirm`：确认本人已收到通知（必须先按当前档通知）
+- `POST /api/items/{id}/exposures/{eid}/appointment`：登记医学随访预约时间
+- `POST /api/items/{id}/severity`：调整严重度（需`expected_version`），原通知与确认全部作废，须按新档重新通知确认
 
 允许角色：dosimetrist, radiation_officer, health_physicist, viewer。剂量与调查水平之比决定升级程度，超过阈值必须进入调查；更正剂量不能覆盖已确认审计记录。
+
+## 暴露人员台账与关闭规则
+
+- 台账按员工号登记剂量数值、通知方式和是否需要随访，同一员工在同一事件只有一条记录。
+- 关闭事件时若仍有未完成项返回409冲突，`details`逐条列出：需要随访者尚未预约时间、剂量达到或超过调查水平（threshold）者尚未确认通知，以及事件下仍有未关闭事项。
+- 严重度调整后，全部暴露人员的通知状态与确认作废，`notify_reset`审计事件记录受影响人数；随访预约保留。
+- 通知方式变更同样使旧通知作废。通知、确认、随访预约/取消、台账更正和严重度调整均写入审计链；演示页展示各事件待通知与待随访人数。
 
 ## 测试
 

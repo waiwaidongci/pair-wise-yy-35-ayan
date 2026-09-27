@@ -71,7 +71,12 @@ def make_handler(service: Service, static_dir: str):
                 status = 400
             else:
                 status = 500
-            self._json(status, {"error": exc.__class__.__name__, "message": str(exc)})
+            payload: Dict[str, Any] = {"error": exc.__class__.__name__,
+                                       "message": str(exc)}
+            details = getattr(exc, "details", None)
+            if details:
+                payload["details"] = details
+            self._json(status, payload)
 
         def do_GET(self) -> None:
             try:
@@ -84,6 +89,15 @@ def make_handler(service: Service, static_dir: str):
                     actor, role = self._identity()
                     del actor
                     self._json(200, {"items": service.list_items(role)})
+                elif path == "/api/exposure_summary":
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"events": service.exposure_summary(role)})
+                elif path.startswith("/api/items/") and path.endswith("/exposures"):
+                    item_id = int(path.split("/")[3])
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"exposures": service.list_exposures(item_id, role)})
                 elif path.startswith("/api/items/") and path.endswith("/records"):
                     item_id = int(path.split("/")[3])
                     actor, role = self._identity()
@@ -110,6 +124,31 @@ def make_handler(service: Service, static_dir: str):
                 body = self._body()
                 if path == "/api/items":
                     self._json(201, service.create_item(body, actor, role))
+                elif path.startswith("/api/items/") and path.endswith("/severity"):
+                    item_id = int(path.split("/")[3])
+                    self._json(200, service.adjust_severity(item_id, body, actor, role))
+                elif "/exposures/" in path:
+                    parts = path.strip("/").split("/")
+                    item_id = int(parts[2])
+                    exposure_id = int(parts[4])
+                    action = parts[5] if len(parts) > 5 else ""
+                    if action == "notify":
+                        self._json(200, service.notify_exposure(
+                            item_id, exposure_id, actor, role))
+                    elif action == "confirm":
+                        self._json(200, service.confirm_exposure(
+                            item_id, exposure_id, actor, role))
+                    elif action == "appointment":
+                        self._json(200, service.schedule_follow_up(
+                            item_id, exposure_id, body, actor, role))
+                    elif action == "":
+                        self._json(200, service.update_exposure(
+                            item_id, exposure_id, body, actor, role))
+                    else:
+                        self._json(404, {"error": "not_found"})
+                elif path.startswith("/api/items/") and path.endswith("/exposures"):
+                    item_id = int(path.split("/")[3])
+                    self._json(201, service.add_exposure(item_id, body, actor, role))
                 elif path.startswith("/api/items/") and path.endswith("/records"):
                     item_id = int(path.split("/")[3])
                     self._json(201, service.add_record(item_id, body, actor, role))
